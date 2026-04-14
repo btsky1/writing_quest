@@ -2,70 +2,105 @@ import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 import json
 import os
+from PIL import Image
+import numpy as np
 
-# --- 1. ACCESS SECRETS ---
-# This pulls the key you just gave me from Streamlit's internal secrets
-API_KEY = st.secrets["HOLY_SHEEP_API_KEY"]
+# --- 1. CORE ENGINE ---
+def load_curriculum():
+    with open('curriculum.json', 'r') as f:
+        return json.load(f)['curriculum']
 
-# --- 2. DATA LOAD/SAVE ---
-def load_data():
-    if not os.path.exists('database.json'):
-        return {"mastery": 50, "drops": 100, "inventory": ["Standard Pencil"]}
-    with open('database.json', 'r') as f:
-        return json.load(f)
+def get_profile(name):
+    path = f"{name.lower()}_vault_vfinal.json"
+    if os.path.exists(path):
+        with open(path, 'r') as f: return json.load(f)
+    return {
+        "name": name, "drops": 100, "week_idx": 0, "active_ink": "#000000",
+        "xp": {"precision": 50, "logic": 50, "grit": 50},
+        "inventory": ["Standard Ink"]
+    }
 
-def save_data(data):
-    with open('database.json', 'w') as f:
-        json.dump(data, f)
+def save_profile(data):
+    with open(f"{data['name'].lower()}_vault_vfinal.json", 'w') as f: json.dump(data, f)
 
-if 'data' not in st.session_state:
-    st.session_state.data = load_data()
+# Create gallery folder if it doesn't exist
+if not os.path.exists("gallery"):
+    os.makedirs("gallery")
 
-# --- 3. THE SHOP (UNLOCKS) ---
-st.sidebar.title("🛍️ Scribe Emporium")
-if st.session_state.data['drops'] >= 500 and "Neon Ink" not in st.session_state.data['inventory']:
-    if st.sidebar.button("Buy Neon Ink (500 💧)"):
-        st.session_state.data['drops'] -= 500
-        st.session_state.data['inventory'].append("Neon Ink")
-        save_data(st.session_state.data)
-        st.sidebar.success("Unlocked: Neon!")
+# --- 2. UI SETUP ---
+st.set_page_config(page_title="The Thinking Chest", layout="wide")
+curr = load_curriculum()
 
-selected_gear = st.sidebar.selectbox("Equip Pen:", st.session_state.data['inventory'])
-ink_color = "#39FF14" if selected_gear == "Neon Ink" else "#000000"
+name = st.sidebar.radio("Identify Scribe:", ["Ollie", "Liam"])
+user = get_profile(name)
 
-# --- 4. HUD & MASTERY ---
-st.sidebar.divider()
-st.sidebar.metric("Ink Drops", f"{st.session_state.data['drops']} 💧")
-st.sidebar.write(f"**Mastery:** {st.session_state.data['mastery']}%")
-st.sidebar.progress(st.session_state.data['mastery'] / 100)
+# Sidebar HUD
+st.sidebar.title(f"🏰 {user['name']}'s Vault")
+st.sidebar.metric("Ink Drops", f"{user['drops']} 💧")
 
-# --- 5. THE QUEST ---
-st.title("🏰 The Scribe's Quest")
-st.info("QUEST: What is the secret ingredient in the world's most powerful potion?")
+# --- 3. MAIN INTERFACE TABS ---
+tab_quest, tab_gallery = st.tabs(["🏹 Current Quest", "🖼️ Scribe Gallery"])
 
-canvas_result = st_canvas(
-    stroke_width=2,
-    stroke_color=ink_color,
-    background_color="#ffffff",
-    height=300,
-    drawing_mode="freedraw",
-    key="canvas",
-)
+with tab_quest:
+    active_week = curr[user['week_idx'] % len(curr)]
+    st.header(f"Level {user['week_idx'] + 1}: {active_week['skill']}")
 
-# --- 6. THE AUDIT (The Hard Mode) ---
-if st.button("Submit to the Master Scribe"):
-    # Simulated check: In real life, we'd send canvas_result.image_data to Holy Sheep
-    # For now, we apply the 3x IXL penalty for testing
-    is_lazy = True 
+    col_logic, col_creative = st.columns(2)
+    with col_logic:
+        if st.button(f"🧠 LOGIC: {active_week['choices']['logic']['title']}"):
+            st.session_state.choice = 'logic'
+    with col_creative:
+        if st.button(f"🎨 CREATIVE: {active_week['choices']['creative']['title']}"):
+            st.session_state.choice = 'creative'
+
+    if 'choice' in st.session_state:
+        selected = active_week['choices'][st.session_state.choice]
+        st.info(f"**QUEST:** {selected['prompt']}")
+        
+        # Adaptive Canvas
+        lh = 50 if user['xp']['precision'] < 75 else 40
+        st.markdown(f"<style>.stCanvas {{ border: 4px solid #31333F; background-image: linear-gradient(#e1e1e1 2px, transparent 1px); background-size: 100% {lh}px; }}</style>", unsafe_allow_html=True)
+
+        canvas_result = st_canvas(
+            stroke_width=3, stroke_color=user['active_ink'],
+            background_color="#ffffff", height=500, key=f"{name}_w{user['week_idx']}"
+        )
+
+        if st.button("Seal the Chest"):
+            # 1. Save the Image to Gallery
+            if canvas_result.image_data is not None:
+                img_path = f"gallery/{name.lower()}_level_{user['week_idx']+1}.png"
+                # Convert canvas data to a savable image
+                img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+                img.save(img_path)
+
+            # 2. Update Stats (using standard reward logic)
+            p, l, g = 85, 90, 100 # Adjust these or add sliders for manual audit
+            user['xp']['precision'] = (user['xp']['precision'] + p) // 2
+            user['xp']['logic'] = (user['xp']['logic'] + l) // 2
+            user['xp']['grit'] = (user['xp']['grit'] + g) // 2
+            user['drops'] += (g // 2) + 25
+            
+            if (user['xp']['precision'] + user['xp']['logic'] + user['xp']['grit']) / 3 > active_week['mastery_score']:
+                user['week_idx'] += 1
+                st.balloons()
+            
+            save_profile(user)
+            del st.session_state.choice
+            st.rerun()
+
+with tab_gallery:
+    st.header(f"The Chronicles of {user['name']}")
     
-    if is_lazy:
-        st.session_state.data['mastery'] = max(0, st.session_state.data['mastery'] - 6)
-        st.session_state.data['drops'] = max(0, st.session_state.data['drops'] - 30)
-        save_data(st.session_state.data)
-        st.error("⚠️ LAZY INK! The foundation is shaky. -30 💧 Fine Applied.")
-        st.warning("Trace your letters correctly to reclaim your honor.")
+    # Fetch all images for this specific user
+    user_images = [f for f in os.listdir("gallery") if f.startswith(name.lower())]
+    user_images.sort() # Keeps them in Level order
+
+    if not user_images:
+        st.write("Your gallery is empty. Complete a quest to start your collection!")
     else:
-        st.balloons()
-        st.session_state.data['mastery'] = min(100, st.session_state.data['mastery'] + 2)
-        st.session_state.data['drops'] += 20
-        save_data(st.session_state.data)
+        # Display images in a 3-column grid
+        cols = st.columns(3)
+        for i, img_name in enumerate(user_images):
+            with cols[i % 3]:
+                st.image(f"gallery/{img_name}", caption=f"Level {i+1}", use_container_width=True)

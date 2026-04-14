@@ -1,5 +1,10 @@
 {
-    "mastery_score": 50,
-    "ink_drops": 100,
-    "inventory": ["Pencil"]
+    "writing_xp": {
+        "sentence_structure": 50,
+        "grammar_mechanics": 50,
+        "text_types": 50,
+        "vocabulary_expansion": 50
+    },
+    "current_module": "Lvl 1: The Narrative Recount",
+    "unlocked_badges": []
 }
