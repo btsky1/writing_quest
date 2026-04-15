@@ -86,26 +86,21 @@ if 'choice' not in st.session_state:
 if 'active_ink_hex' not in st.session_state:
     st.session_state.active_ink_hex = "#1B263B"
 
-# --- 3. THE SDK RELAY (Full Vision-Enabled Build) ---
+# --- 3. THE SDK RELAY (HolySheep Configured) ---
 def call_oracle(messages, model="gemini-3.1-pro-preview"):
     from openai import OpenAI
     
-    # 1. PRISTINE CREDENTIALS
-    # We strip everything to ensure no hidden chars trigger Nginx 500
-    api_key = st.secrets["HS_API_KEY"].strip()
-    base_url = st.secrets["HS_BASE_URL"].strip().rstrip('/')
-    
     try:
-        # 2. INITIALIZE CLIENT
+        # st.secrets acts like a dictionary reading your TOML file
         client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            # We explicitly set default headers to look like a standard browser/SDK
-            default_headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ThinkingChest/1.0"}
+            api_key=st.secrets["HS_API_KEY"].strip(),
+            base_url=st.secrets["HS_BASE_URL"].strip()
         )
         
-        # 3. EXECUTE HANDSHAKE
-        # The SDK handles all commas and JSON brackets perfectly
+        if st.session_state.debug:
+            st.info(f"SDK authenticating with HolySheep Gateway...")
+
+        # We pass the multi-modal messages list directly to the SDK
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -116,14 +111,7 @@ def call_oracle(messages, model="gemini-3.1-pro-preview"):
         return response.choices[0].message.content
 
     except Exception as e:
-        # If the Nginx 500 HTML still appears here, it is a server-side 
-        # issue at HolySheep that you cannot fix via code.
         st.error(f"🏰 Oracle Tower Error: {str(e)}")
-        
-        if st.session_state.debug:
-            with st.expander("Diagnostic Scroll"):
-                st.write(f"Attempted Model: {model}")
-                st.write(f"Target URL: {base_url}/chat/completions")
         return None
         
 # --- 4. THE GREAT HALL (Full UI & Glow Engine) ---
