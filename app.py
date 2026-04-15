@@ -85,32 +85,38 @@ if 'choice' not in st.session_state:
 if 'active_ink_hex' not in st.session_state:
     st.session_state.active_ink_hex = "#1B263B"
 
-# --- 3. THE HARDENED RELAY (Nginx & Gateway Stability) ---
+# --- 3. THE HARDENED RELAY (Nginx 500 & JSON Fix) ---
 def call_oracle(messages, model="gemini-3.1-pro-preview"):
-    # Safety Check: Strip secrets to avoid double-slash URL errors
+    # Ensure secrets are pristine
     api_key = st.secrets["HS_API_KEY"].strip()
     base_url = st.secrets["HS_BASE_URL"].strip().rstrip('/')
     full_url = f"{base_url}/chat/completions"
     
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Content-Type": "application/json"
     }
     
+    # Constructing the dictionary explicitly to ensure valid JSON serialization
     payload = {
-        "model": model, 
+        "model": str(model),
         "messages": messages,
         "temperature": 0.7
     }
     
     if st.session_state.debug:
-        with st.expander("🛠️ API Trace"):
+        with st.expander("🛠️ Outgoing Scroll (Debug)"):
             st.write(f"Endpoint: {full_url}")
-            st.json(payload)
+            st.json(payload) # This will show if the dictionary is valid
             
     try:
-        r = requests.post(full_url, json=payload, headers=headers, timeout=60)
+        # Use json=payload to let the requests library handle the serialization/commas
+        r = requests.post(
+            full_url, 
+            json=payload, 
+            headers=headers, 
+            timeout=60
+        )
         
         if r.status_code != 200:
             st.error(f"🏰 Oracle Tower Rejected Request (Error {r.status_code})")
@@ -119,10 +125,9 @@ def call_oracle(messages, model="gemini-3.1-pro-preview"):
             st.stop()
             return None
             
-        response_data = r.json()
-        return response_data['choices'][0]['message']['content']
+        return r.json()['choices'][0]['message']['content']
     except Exception as e:
-        st.error(f"The scroll was lost in the ether: {str(e)}")
+        st.error(f"The scroll was lost: {str(e)}")
         return None
 
 # --- 4. THE GREAT HALL (Full UI & Glow Engine) ---
