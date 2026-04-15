@@ -1,3 +1,4 @@
+from openai import OpenAI
 import streamlit as st
 import requests
 import base64
@@ -85,51 +86,44 @@ if 'choice' not in st.session_state:
 if 'active_ink_hex' not in st.session_state:
     st.session_state.active_ink_hex = "#1B263B"
 
-# --- 3. THE HARDENED RELAY (Nginx 500 & JSON Fix) ---
+# --- 3. THE SDK RELAY (Full Vision-Enabled Build) ---
 def call_oracle(messages, model="gemini-3.1-pro-preview"):
-    # Ensure secrets are pristine
-    api_key = st.secrets["HS_API_KEY"].strip()
-    base_url = st.secrets["HS_BASE_URL"].strip().rstrip('/')
-    full_url = f"{base_url}/chat/completions"
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    # Constructing the dictionary explicitly to ensure valid JSON serialization
-    payload = {
-        "model": str(model),
-        "messages": messages,
-        "temperature": 0.7
-    }
-    
-    if st.session_state.debug:
-        with st.expander("🛠️ Outgoing Scroll (Debug)"):
-            st.write(f"Endpoint: {full_url}")
-            st.json(payload) # This will show if the dictionary is valid
-            
+    from openai import OpenAI
     try:
-        # Use json=payload to let the requests library handle the serialization/commas
-        r = requests.post(
-            full_url, 
-            json=payload, 
-            headers=headers, 
-            timeout=60
+        client = OpenAI(
+            api_key=st.secrets["HS_API_KEY"].strip(),
+            base_url=st.secrets["HS_BASE_URL"].strip().rstrip('/')
         )
         
-        if r.status_code != 200:
-            st.error(f"🏰 Oracle Tower Rejected Request (Error {r.status_code})")
-            with st.expander("Nginx Response Details"):
-                st.code(r.text)
-            st.stop()
-            return None
+        # This check ensures we handle both text prompts and vision snapshots
+        # which is critical for Paper Pilot and Scribing checks.
+        formatted_messages = []
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content")
             
-        return r.json()['choices'][0]['message']['content']
-    except Exception as e:
-        st.error(f"The scroll was lost: {str(e)}")
-        return None
+            # If content is already a list (Vision format), we pass it as-is
+            # If it's a string, we ensure it's wrapped for the SDK
+            formatted_messages.append({"role": role, "content": content})
 
+        response = client.chat.completions.create(
+            model=model,
+            messages=formatted_messages,
+            temperature=0.7,
+            max_tokens=1024 # Prevents Nginx timeout on long explanations
+        )
+        
+        return response.choices[0].message.content
+
+    except Exception as e:
+        st.error(f"🏰 Oracle Tower Error: {str(e)}")
+        # Diagnostics for the Coordinator
+        if st.session_state.debug:
+            with st.expander("Diagnostic Trace"):
+                st.write(f"Model: {model}")
+                st.write(f"Endpoint: {st.secrets['HS_BASE_URL']}")
+        return None
+        
 # --- 4. THE GREAT HALL (Full UI & Glow Engine) ---
 st.set_page_config(page_title="The Thinking Chest", layout="wide")
 

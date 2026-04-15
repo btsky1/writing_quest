@@ -4,3 +4,4 @@ streamlit-mic-recorder
 requests
 Pillow
 gTTS
+openai
