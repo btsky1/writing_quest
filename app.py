@@ -89,39 +89,41 @@ if 'active_ink_hex' not in st.session_state:
 # --- 3. THE SDK RELAY (Full Vision-Enabled Build) ---
 def call_oracle(messages, model="gemini-3.1-pro-preview"):
     from openai import OpenAI
+    
+    # 1. PRISTINE CREDENTIALS
+    # We strip everything to ensure no hidden chars trigger Nginx 500
+    api_key = st.secrets["HS_API_KEY"].strip()
+    base_url = st.secrets["HS_BASE_URL"].strip().rstrip('/')
+    
     try:
+        # 2. INITIALIZE CLIENT
         client = OpenAI(
-            api_key=st.secrets["HS_API_KEY"].strip(),
-            base_url=st.secrets["HS_BASE_URL"].strip().rstrip('/')
+            api_key=api_key,
+            base_url=base_url,
+            # We explicitly set default headers to look like a standard browser/SDK
+            default_headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ThinkingChest/1.0"}
         )
         
-        # This check ensures we handle both text prompts and vision snapshots
-        # which is critical for Paper Pilot and Scribing checks.
-        formatted_messages = []
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            
-            # If content is already a list (Vision format), we pass it as-is
-            # If it's a string, we ensure it's wrapped for the SDK
-            formatted_messages.append({"role": role, "content": content})
-
+        # 3. EXECUTE HANDSHAKE
+        # The SDK handles all commas and JSON brackets perfectly
         response = client.chat.completions.create(
             model=model,
-            messages=formatted_messages,
+            messages=messages,
             temperature=0.7,
-            max_tokens=1024 # Prevents Nginx timeout on long explanations
+            max_tokens=1024 
         )
         
         return response.choices[0].message.content
 
     except Exception as e:
+        # If the Nginx 500 HTML still appears here, it is a server-side 
+        # issue at HolySheep that you cannot fix via code.
         st.error(f"🏰 Oracle Tower Error: {str(e)}")
-        # Diagnostics for the Coordinator
+        
         if st.session_state.debug:
-            with st.expander("Diagnostic Trace"):
-                st.write(f"Model: {model}")
-                st.write(f"Endpoint: {st.secrets['HS_BASE_URL']}")
+            with st.expander("Diagnostic Scroll"):
+                st.write(f"Attempted Model: {model}")
+                st.write(f"Target URL: {base_url}/chat/completions")
         return None
         
 # --- 4. THE GREAT HALL (Full UI & Glow Engine) ---
