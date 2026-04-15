@@ -58,29 +58,35 @@ if 'passed' not in st.session_state: st.session_state.passed = False
 if 'debug' not in st.session_state: st.session_state.debug = False
 if 'choice' not in st.session_state: st.session_state.choice = "Creative Tale"
 
-# --- 3. THE REFINED RELAY (Proxy-Friendly) ---
+# --- 3. THE HARDENED RELAY (The 500 Fix) ---
 def call_oracle(messages, model="gemini-3.1-pro-preview"):
+    # Force clean secrets to prevent Nginx double-slash // errors
+    api_key = st.secrets["HS_API_KEY"].strip()
+    base_url = st.secrets["HS_BASE_URL"].strip().rstrip('/')
+    full_url = f"{base_url}/chat/completions"
+    
     headers = {
-        "Authorization": f"Bearer {st.secrets['HS_API_KEY']}", 
+        "Authorization": f"Bearer {api_key}", 
         "Content-Type": "application/json"
     }
     
-    # URL CLEANING LOGIC: Removes any extra slashes that cause Nginx 500s
-    base = st.secrets['HS_BASE_URL'].strip().rstrip('/')
-    url = f"{base}/chat/completions"
-    
     payload = {"model": model, "messages": messages}
     
+    if st.session_state.debug:
+        with st.expander("🛠️ Oracle Payload Debug"):
+            st.write(f"Final Endpoint: {full_url}")
+            st.json(payload)
+            
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=45)
+        r = requests.post(full_url, json=payload, headers=headers, timeout=45)
         if r.status_code != 200:
             st.error(f"Oracle Connection Error ({r.status_code})")
-            # If we still get a 500, we show the exact URL we tried to hit for debugging
-            st.warning(f"Attempted URL: {url}")
+            st.code(r.text) # Shows Nginx internal error for debugging
             st.stop()
+            return None
         return r.json()['choices'][0]['message']['content']
     except Exception as e:
-        st.error(f"Shield Failure: {str(e)}")
+        st.error(f"The scroll failed to reach the tower: {str(e)}")
         return None
 
 # --- 4. THE GREAT HALL (UI & GLOW ENGINE) ---
@@ -89,11 +95,10 @@ st.set_page_config(page_title="The Thinking Chest", layout="wide")
 if not LIBS_OK:
     st.error(f"Critical Library Missing: {ERR_MSG}"); st.stop()
 
-# Determine Glow intensity
+# Determine Glow intensity based on rarity
 current_hex = st.session_state.get('active_ink_hex', '#FFFFFF')
-# Check if current ink is Legendary for massive glow
 is_legendary = any(current_hex == v for d in INK_CATALOG.values() for v in d.values() if "Legendary" in str(d))
-glow_val = "20px" if is_legendary else "7px"
+glow_intensity = "22px" if is_legendary else "7px"
 
 st.markdown(f"""
     <style>
@@ -103,7 +108,7 @@ st.markdown(f"""
         background-size: 100% 40px !important;
         border: 3px solid #444; border-radius: 12px;
     }}
-    canvas {{ filter: drop-shadow(0 0 {glow_val} {current_hex}); }} 
+    canvas {{ filter: drop-shadow(0 0 {glow_intensity} {current_hex}); }} 
     .ink-swatch {{
         width: 48px; height: 48px; border-radius: 50%; border: 2px solid white;
         display: inline-block; margin-right: 12px; vertical-align: middle;
@@ -121,14 +126,14 @@ with st.sidebar:
     st.metric("Ink Drops", f"{user['drops']} 💧")
     
     # COLLECTION SECTION
-    st.subheader("🖋️ Current Ink")
+    st.subheader("🖋️ Current Pigment")
     selected_ink_name = st.selectbox("Your Collection", list(user['unlocked_inks'].keys()))
     user['active_ink_name'] = selected_ink_name
     user['active_ink_hex'] = user['unlocked_inks'][selected_ink_name]
     st.session_state['active_ink_hex'] = user['active_ink_hex']
     
-    # Collection Preview Swatch
-    st.markdown(f'<div class="ink-swatch" style="background-color:{user["active_ink_hex"]}; box-shadow: 0 0 {glow_val} {user["active_ink_hex"]};"></div>', unsafe_allow_html=True)
+    # Live Collection Preview
+    st.markdown(f'<div class="ink-swatch" style="background-color:{user["active_ink_hex"]}; box-shadow: 0 0 {glow_intensity} {user["active_ink_hex"]};"></div>', unsafe_allow_html=True)
 
     # THE ARMOURY SHOP
     st.markdown("### ⚔️ The Armoury ink shop")
@@ -163,10 +168,10 @@ with st.sidebar:
     # TEACHER'S DESK (COORDINATOR OVERRIDES)
     with st.expander("🔐 Teacher's Desk"):
         coord_key = st.text_input("Vault Key", type="password")
-        if coord_key == "67":
+        if coord_key == st.secrets.get("VAULT_KEY", "67"):
             if st.button("Grant 10,000💧"):
                 user['drops'] += 10000; save_profile(user); st.rerun()
-            st.session_state.debug = st.toggle("Oracle Diagnostics (Debug)")
+            st.session_state.debug = st.toggle("Show Oracle Diagnostics")
     
     if st.button("🔄 Reset Current Quest"):
         st.session_state.quest = False; st.rerun()
@@ -179,7 +184,7 @@ if not st.session_state.quest:
     
     if st.button("🔓 Open the Scroll"):
         with st.spinner("The Oracle is drawing upon the ether..."):
-            # PROXY FIX: All instructions in 'user' role, avoiding 'system' role entirely
+            # ROLE BYPASS: Put instructions in a single 'user' message to avoid proxy 500 errors
             combined_prompt = (
                 f"Act as a G6 Master Teacher. {user['name']} is on the {track} track. "
                 f"Design a specific {st.session_state.choice} task suitable for their level. "
@@ -229,17 +234,16 @@ if st.session_state.quest:
         # MANDARIN VOICE PRACTICE
         if track == "Mandarin Scribe":
             st.subheader("🎤 Voice Practice")
-            recorded_audio = mic_recorder(start_prompt="Record your attempt", stop_prompt="Stop Recording", key='m_rec_v57')
+            recorded_audio = mic_recorder(start_prompt="Record your attempt", stop_prompt="Stop Recording", key='m_rec_v60')
             if recorded_audio:
                 st.audio(recorded_audio['bytes'])
-                st.info("Listen back and compare your tones to the Oracle.")
+                st.info("Listen back and compare your tones to the Oracle's guidance.")
 
     # 7.3 TRACING & CANVAS (The Core Writing Task)
-    # Ghost text opacity changes once passed
-    ghost_opacity = 0.18 if not st.session_state.passed else 0.50
+    ghost_opacity = 0.15 if not st.session_state.passed else 0.50
     st.markdown(f'<p style="color:rgba(255,255,255,{ghost_opacity}); font-family:Courier; font-size:32px; margin-bottom:-45px; padding-left:20px; font-weight:bold; pointer-events:none; line-height:40px;">{st.session_state.ghost}</p>', unsafe_allow_html=True)
 
-    canvas_id = f"v57_{track}_{user['week_idx']}_{user['daily_count']}"
+    canvas_id = f"v60_{track}_{user['week_idx']}_{user['daily_count']}"
     canvas_result = st_canvas(
         stroke_width=4, stroke_color=user['active_ink_hex'], 
         background_color="rgba(0,0,0,0)", height=500, key=canvas_id
@@ -250,8 +254,7 @@ if st.session_state.quest:
     if col_eval.button("🔍 Check iPad Scribing"):
         if canvas_result.image_data is not None:
             raw_img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA').convert("RGB")
-            buffer = io.BytesIO(); raw_img.save(buffer, format="JPEG")
-            b64_canvas = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            buffer = io.BytesIO(); raw_img.save(buffer, format="JPEG"); b64_canvas = base64.b64encode(buffer.getvalue()).decode('utf-8')
             
             with st.spinner("The Oracle evaluates your ink..."):
                 eval_messages = [{"role": "user", "content": [
@@ -266,7 +269,7 @@ if st.session_state.quest:
                         st.session_state.explanation = res_json.get('explanation', "")
                         st.session_state.passed = res_json.get('passed', False)
                         st.rerun()
-                    except: st.error("Evaluation failed.")
+                    except: st.error("Evaluation failed. The Oracle is confused.")
 
     if st.session_state.passed:
         if col_seal.button("✨ Seal the Chest"):
