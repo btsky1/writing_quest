@@ -87,31 +87,54 @@ if 'active_ink_hex' not in st.session_state:
     st.session_state.active_ink_hex = "#1B263B"
 
 # --- 3. THE SDK RELAY (HolySheep Configured) ---
+# --- 3. THE RAW CURL RELAY (Section 3 Replacement) ---
 def call_oracle(messages, model="gemini-3.1-pro-preview"):
-    from openai import OpenAI
+    import requests
+    import json
     
-    try:
-        # st.secrets acts like a dictionary reading your TOML file
-        client = OpenAI(
-            api_key=st.secrets["HS_API_KEY"].strip(),
-            base_url=st.secrets["HS_BASE_URL"].strip()
-        )
-        
-        if st.session_state.debug:
-            st.info(f"SDK authenticating with HolySheep Gateway...")
+    # 1. Clean Credentials
+    api_key = st.secrets["HS_API_KEY"].strip()
+    base_url = st.secrets["HS_BASE_URL"].strip().rstrip('/')
+    full_url = f"{base_url}/chat/completions"
+    
+    # 2. Mimic a standard cURL / Browser header
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",  # Standard browser identity
+        "Accept": "application/json"
+    }
+    
+    # 3. Explicit Payload Construction
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.7
+    }
+    
+    if st.session_state.debug:
+        st.info(f"📡 Sending Raw Request to: {full_url}")
 
-        # We pass the multi-modal messages list directly to the SDK
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=1024 
+    try:
+        # We use json.dumps to ensure the JSON is 100% standard-compliant
+        response = requests.post(
+            full_url, 
+            data=json.dumps(payload), 
+            headers=headers, 
+            timeout=60
         )
         
-        return response.choices[0].message.content
+        if response.status_code != 200:
+            st.error(f"🏰 Oracle Tower Rejected Request (Error {response.status_code})")
+            with st.expander("Nginx Error Page"):
+                st.code(response.text)
+            return None
+            
+        result = response.json()
+        return result['choices'][0]['message']['content']
 
     except Exception as e:
-        st.error(f"🏰 Oracle Tower Error: {str(e)}")
+        st.error(f"🏰 Connection Lost: {str(e)}")
         return None
         
 # --- 4. THE GREAT HALL (Full UI & Glow Engine) ---
