@@ -1,7 +1,6 @@
-requests
-pillow
 streamlit
 streamlit-drawable-canvas
-numpy
 streamlit-mic-recorder
+requests
+Pillow
 gTTS
