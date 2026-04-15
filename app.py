@@ -2,7 +2,7 @@ import streamlit as st
 import requests, base64, json, os, io
 from PIL import Image
 
-# --- 0. LIBRARY CHECK ---
+# --- 0. LIBRARY SAFETY CHECK ---
 try:
     from streamlit_drawable_canvas import st_canvas
     from streamlit_mic_recorder import mic_recorder
@@ -12,7 +12,7 @@ except ImportError as e:
     LIBS_OK = False
     ERR = str(e)
 
-# --- 1. THE ARMOURY DATA (ECONOMY & VAULT) ---
+# --- 1. THE ARMOURY REGISTRY ---
 INK_CATALOG = {
     "Common (250💧)": {
         "Shadow Blue": "#1B263B", "Rusty Iron": "#8B4513", "Forest Verge": "#2D5A27"
@@ -32,7 +32,7 @@ def get_profile(name):
     path = f"{name.lower()}_vault.json"
     defaults = {
         "name": name, "drops": 500, "week_idx": 0, "daily_count": 0, 
-        "active_ink_name": "Shadow Blue", "active_ink_hex": "#1B263B",
+        "active_ink_hex": "#1B263B", "active_ink_name": "Shadow Blue",
         "unlocked_inks": {"Shadow Blue": "#1B263B"}, "story_context": "The journey begins..."
     }
     if os.path.exists(path):
@@ -45,45 +45,66 @@ def get_profile(name):
 def save_profile(data):
     json.dump(data, open(f"{data['name'].lower()}_vault.json", 'w'))
 
-# --- 2. SESSION STATE ---
-if 'quest' not in st.session_state: st.session_state.quest = False
-if 'ghost' not in st.session_state: st.session_state.ghost = ""
-if 'explanation' not in st.session_state: st.session_state.explanation = ""
-if 'passed' not in st.session_state: st.session_state.passed = False
+# --- 2. SESSION STATE MANAGEMENT ---
+# Using a dictionary to batch-initialize
+states = {
+    'quest': False, 'ghost': "", 'explanation': "", 
+    'passed': False, 'choice': "Creative Tale", 'debug_mode': False
+}
+for k, v in states.items():
+    if k not in st.session_state: st.session_state[k] = v
 
-# --- 3. HARDENED API RELAY (500 ERROR FIX) ---
-def call_oracle(payload, use_json_mode=True):
-    headers = {"Authorization": f"Bearer {st.secrets['HS_API_KEY']}", "Content-Type": "application/json"}
-    # If standard JSON mode fails, we move it to the prompt only
-    if not use_json_mode and "response_format" in payload:
-        del payload["response_format"]
-        
+# --- 3. HARDENED API RELAY (NO RECURSION) ---
+def call_oracle(payload):
+    headers = {
+        "Authorization": f"Bearer {st.secrets['HS_API_KEY']}", 
+        "Content-Type": "application/json"
+    }
+    
+    if st.session_state.debug_mode:
+        with st.expander("🛠️ Outgoing Payload Diagnostics"):
+            st.json(payload)
+
     try:
-        r = requests.post(f"{st.secrets['HS_BASE_URL']}/chat/completions", json=payload, headers=headers, timeout=35)
-        if r.status_code == 500:
-            # Fallback for Nginx/Server errors: try without strict JSON mode
-            return call_oracle(payload, use_json_mode=False)
+        # Increased timeout for international routing (Xiamen to HS)
+        r = requests.post(
+            f"{st.secrets['HS_BASE_URL']}/chat/completions", 
+            json=payload, headers=headers, timeout=45
+        )
+        
         if r.status_code != 200:
-            st.error(f"Oracle Error {r.status_code}"); st.code(r.text); return None
+            st.error(f"Oracle Connection Error ({r.status_code})")
+            st.code(r.text)
+            # If the server 500s, we stop the execution to prevent infinite spinning
+            st.stop()
+            return None
+            
         return r.json()['choices'][0]['message']['content']
+        
     except Exception as e:
-        st.error(f"Connection Failed: {str(e)}"); return None
+        st.error(f"The scroll failed to reach the tower: {str(e)}")
+        return None
 
-# --- 4. THE GREAT HALL (UI) ---
+# --- 4. UI CONFIG & GLOWING CSS ---
 st.set_page_config(page_title="The Thinking Chest", layout="wide")
-st.markdown("""
+
+# Determine glow intensity based on ink rarity
+glow_color = st.session_state.get('active_ink_hex', '#FFFFFF')
+
+st.markdown(f"""
     <style>
-    .stCanvas { 
+    .stCanvas {{ 
         background-color: #1a1c23 !important;
         background-image: linear-gradient(#2d313a 1px, transparent 1px) !important;
         background-size: 100% 40px !important;
         border: 3px solid #444; border-radius: 12px;
-    }
-    canvas { filter: drop-shadow(0 0 5px #ffffff); } /* Glowing Ink Effect */
+    }}
+    /* The Glowing Ink Effect */
+    canvas {{ filter: drop-shadow(0 0 6px {glow_color}); }} 
     </style>
 """, unsafe_allow_html=True)
 
-# --- 5. SIDEBAR: IDENTITY & ARMOURY ---
+# --- 5. SIDEBAR: IDENTITY & THE ARMOURY ---
 name = st.sidebar.radio("Identify Scribe:", ["Ollie", "Liam"])
 user = get_profile(name)
 track = st.sidebar.radio("Learning Track:", ["English Master", "Mandarin Scribe"])
@@ -92,75 +113,91 @@ with st.sidebar:
     st.divider()
     st.metric("Ink Drops", f"{user['drops']} 💧")
     
-    # INK SELECTION (Clean)
-    st.subheader("🖋️ Current Ink")
-    selected_ink_name = st.selectbox("Select from Collection", list(user['unlocked_inks'].keys()))
-    user['active_ink_name'] = selected_ink_name
-    user['active_ink_hex'] = user['unlocked_inks'][selected_ink_name]
+    # Clean Ink Selection
+    st.subheader("🖋️ Collection")
+    selected_ink = st.selectbox("Select Ink", list(user['unlocked_inks'].keys()))
+    user['active_ink_name'] = selected_ink
+    user['active_ink_hex'] = user['unlocked_inks'][selected_ink]
+    # Update global glow for the CSS
+    st.session_state['active_ink_hex'] = user['active_ink_hex']
     
     # THE ARMOURY SHOP
-    with st.expander("⚔️ The Armoury ink shop"):
+    st.markdown("### ⚔️ The Armoury ink shop")
+    with st.expander("View Inks & Tiers"):
         tier_label = st.selectbox("Browse Tier", list(INK_CATALOG.keys()))
-        price = 250 if "Common" in tier_label else 1000 if "Rare" in tier_label else 2500 if "Magic" in tier_label else 10000
+        
+        # Explicit Pricing logic
+        if "Common" in tier_label: price = 250
+        elif "Rare" in tier_label: price = 1000
+        elif "Magic" in tier_label: price = 2500
+        else: price = 10000 # Legendary
         
         inks_in_tier = INK_CATALOG[tier_label]
-        target_ink = st.selectbox("Select Pigment", list(inks_in_tier.keys()))
+        target_ink = st.selectbox("Choose Pigment", list(inks_in_tier.keys()))
         hex_val = inks_in_tier[target_ink]
         
-        st.markdown(f"**Cost:** {price} 💧")
-        if st.button(f"Acquire {target_ink}"):
+        st.markdown(f"**Investment:** {price} 💧")
+        if st.button(f"Forge {target_ink}"):
             if user['drops'] >= price:
                 if target_ink not in user['unlocked_inks']:
                     user['drops'] -= price
                     user['unlocked_inks'][target_ink] = hex_val
-                    save_profile(user); st.success(f"{target_ink} is yours!"); st.rerun()
-                else: st.info("You already possess this ink.")
-            else: st.error("You need more Ink Drops.")
+                    save_profile(user)
+                    st.success(f"The {target_ink} is yours."); st.rerun()
+                else: st.info("This ink is already in your inventory.")
+            else: st.error("You require more drops.")
 
-    with st.expander("🔐 Coordinator"):
-        if st.text_input("Key", type="password") == "67":
-            if st.button("Add 10000💧"): user['drops'] += 10000; save_profile(user); st.rerun()
+    # Maintenance & Debug
+    st.divider()
+    st.session_state.debug_mode = st.toggle("Oracle Diagnostics")
+    if st.button("🔄 Clear Stuck Scroll"):
+        st.session_state.quest = False; st.rerun()
 
-# --- 6. THE QUEST ---
+# --- 6. THE QUEST LOGIC ---
 st.title(f"🏰 {track}: Level {user['week_idx'] + 1}")
 
 if not st.session_state.quest:
-    # UPDATED: Choose your Quest
     st.session_state.choice = st.radio("Choose your Quest:", ["Creative Tale", "Logical Analysis", "Survival Skill"], horizontal=True)
+    
     if st.button("🔓 Open the Scroll"):
-        with st.spinner("Oracle is writing..."):
-            instr = f"Track: {track}. Style: {st.session_state.choice}. User: {user['name']}. Task: Grade 6/HSK Challenge."
-            payload = {"model": "gemini-3.1-pro-preview", "messages": [{"role": "system", "content": instr}]}
+        with st.spinner("The Oracle is preparing the scroll..."):
+            instr = f"User: {user['name']}. Track: {track}. Style: {st.session_state.choice}. Task: Grade 6 Level Challenge. Direct, no intro."
+            payload = {
+                "model": "gemini-3.1-pro-preview", 
+                "messages": [{"role": "system", "content": instr}]
+            }
             res = call_oracle(payload)
             if res:
-                st.session_state.quest = res; st.rerun()
+                st.session_state.quest = res
+                st.rerun()
 
+# --- 7. ACTIVE QUEST UI ---
 if st.session_state.quest:
     st.info(st.session_state.quest)
     
-    # PAPER PILOT
+    # PAPER PILOT (Physical to Digital)
     with st.expander("📷 Paper Pilot (Camera Scan)"):
-        cam = st.camera_input("Snapshot your paper")
-        if cam and st.button("Analyze Ink"):
+        cam = st.camera_input("Snapshot your physical draft")
+        if cam and st.button("Extract Ink"):
             with st.spinner("Decoding..."):
                 encoded = base64.b64encode(cam.getvalue()).decode('utf-8')
+                # Safety: Using non-strict JSON for initial extraction
                 payload = {
                     "model": "gemini-3.1-flash-image-preview",
                     "messages": [{"role": "user", "content": [
-                        {"type": "text", "text": "Return JSON: 'corrected', 'explanation', 'passed'."},
+                        {"type": "text", "text": "Return strictly as JSON with keys 'corrected', 'explanation', 'passed' (true/false)."},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}
-                    ]}], "response_format": {"type": "json_object"}
+                    ]}]
                 }
                 res_str = call_oracle(payload)
                 if res_str:
                     try:
-                        # Clean potential markdown from raw text fallback
-                        clean_str = res_str.replace("```json", "").replace("```", "").strip()
-                        res = json.loads(clean_str)
-                        st.session_state.ghost = res.get('corrected', "")
-                        st.session_state.explanation = res.get('explanation', "")
+                        # Strip markdown if model returns it
+                        json_data = json.loads(res_str.replace("```json", "").replace("```", "").strip())
+                        st.session_state.ghost = json_data.get('corrected', "")
+                        st.session_state.explanation = json_data.get('explanation', "")
                         st.rerun()
-                    except: st.error("Oracle spoke in riddles. Try again.")
+                    except: st.error("Oracle spoke in a format we cannot read. Try again.")
 
     # COUNSEL & AUDIO
     if st.session_state.explanation:
@@ -169,37 +206,42 @@ if st.session_state.quest:
         with c2:
             if st.button("🔊 Hear Oracle"):
                 tts = gTTS(text=st.session_state.explanation, lang='zh-CN' if track == "Mandarin Scribe" else 'en')
-                fp = io.BytesIO(); tts.write_to_fp(fp); fp.seek(0); st.audio(fp, format='audio/mp3')
+                fp = io.BytesIO(); tts.write_to_fp(fp); fp.seek(0)
+                st.audio(fp, format='audio/mp3')
 
-    # THE CANVAS
+    # TRACING & CANVAS
     opac = 0.15 if not st.session_state.passed else 0.45
-    st.markdown(f'<p style="color:rgba(255,255,255,{opac}); font-family:Courier; font-size:30px; margin-bottom:-45px; padding-left:20px; font-weight:bold; pointer-events:none; line-height:40px;">{st.session_state.ghost}</p>', unsafe_allow_html=True)
+    st.markdown(f'<p style="color:rgba(255,255,255,{opac}); font-family:Courier; font-size:32px; margin-bottom:-45px; padding-left:20px; font-weight:bold; pointer-events:none; line-height:40px;">{st.session_state.ghost}</p>', unsafe_allow_html=True)
 
-    canvas_key = f"v53_{track}_{user['week_idx']}_{user['daily_count']}"
-    canvas_result = st_canvas(stroke_width=4, stroke_color=user['active_ink_hex'], background_color="rgba(0,0,0,0)", height=500, key=canvas_key)
+    c_key = f"v54_{track}_{user['week_idx']}_{user['daily_count']}"
+    canvas_res = st_canvas(
+        stroke_width=4, stroke_color=user['active_ink_hex'], 
+        background_color="rgba(0,0,0,0)", height=500, key=c_key
+    )
 
     colA, colB = st.columns(2)
     if colA.button("🔍 Check iPad Scribing"):
-        if canvas_result.image_data is not None:
-            img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA').convert("RGB")
+        if canvas_res.image_data is not None:
+            img = Image.fromarray(canvas_res.image_data.astype('uint8'), 'RGBA').convert("RGB")
             buf = io.BytesIO(); img.save(buf, format="JPEG")
             encoded = base64.b64encode(buf.getvalue()).decode('utf-8')
-            with st.spinner("Evaluating..."):
+            with st.spinner("Calculating precision..."):
                 payload = {
                     "model": "gemini-3.1-flash-image-preview",
                     "messages": [{"role": "user", "content": [
-                        {"type": "text", "text": "Evaluate. Return JSON: 'corrected', 'explanation', 'passed'."},
+                        {"type": "text", "text": "Evaluate tracing. Return JSON: 'corrected', 'explanation', 'passed'."},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}
-                    ]}], "response_format": {"type": "json_object"}
+                    ]}]
                 }
                 res_str = call_oracle(payload)
                 if res_str:
                     try:
-                        clean_str = res_str.replace("```json", "").replace("```", "").strip()
-                        res = json.loads(clean_str)
-                        st.session_state.ghost, st.session_state.explanation, st.session_state.passed = res.get('corrected', ""), res.get('explanation', ""), res.get('passed', False)
+                        json_data = json.loads(res_str.replace("```json", "").replace("```", "").strip())
+                        st.session_state.ghost = json_data.get('corrected', "")
+                        st.session_state.explanation = json_data.get('explanation', "")
+                        st.session_state.passed = json_data.get('passed', False)
                         st.rerun()
-                    except: st.error("JSON Error.")
+                    except: st.error("Evaluation error.")
 
     if st.session_state.passed:
         if colB.button("✨ Seal the Chest"):
